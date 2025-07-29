@@ -1,2 +1,4 @@
 streamlit
 Pillow
+pymongo[srv]>=4.6.0
+

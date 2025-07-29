@@ -1,25 +1,22 @@
 import streamlit as st
-import json
+import pymongo
 import uuid
-from PIL import Image
-import io
 import base64
+import io
+from PIL import Image
+import os
 
-# ------------------ JSON File Helpers ------------------
-
-def load_json(file):
-    with open(file, "r") as f:
-        return json.load(f)
-
-def save_json(file, data):
-    with open(file, "w") as f:
-        json.dump(data, f, indent=4)
+# ------------------ MongoDB Setup ------------------
+MONGO_URI = st.secrets["MONGO_URI"]  # Stored in Streamlit secrets
+client = pymongo.MongoClient(MONGO_URI)
+db = client["project_dashboard"]
+users_col = db["users"]
+projects_col = db["projects"]
 
 # ------------------ User & Project Functions ------------------
 
 def register_user(email, password, name, college, team_no, mode, profile_pic):
-    users = load_json("users.json")
-    if any(u["email"] == email for u in users):
+    if users_col.find_one({"email": email}):
         return False, "Email already registered."
 
     pic_data = base64.b64encode(profile_pic.read()).decode() if profile_pic else None
@@ -35,39 +32,25 @@ def register_user(email, password, name, college, team_no, mode, profile_pic):
         "profile_pic": pic_data
     }
 
-    users.append(user)
-    save_json("users.json", users)
+    users_col.insert_one(user)
     return True, "Registered successfully!"
 
 def login_user(email, password):
-    users = load_json("users.json")
-    for user in users:
-        if user["email"] == email and user["password"] == password:
-            return user
-    return None
+    return users_col.find_one({"email": email, "password": password})
 
 def save_project(user_id, project):
-    projects = load_json("projects.json")
     project["id"] = str(uuid.uuid4())
     project["user_id"] = user_id
-    projects.append(project)
-    save_json("projects.json", projects)
+    projects_col.insert_one(project)
 
 def get_projects(user_id):
-    projects = load_json("projects.json")
-    return [p for p in projects if p["user_id"] == user_id]
+    return list(projects_col.find({"user_id": user_id}))
 
 def delete_project(project_id):
-    projects = load_json("projects.json")
-    projects = [p for p in projects if p["id"] != project_id]
-    save_json("projects.json", projects)
+    projects_col.delete_one({"id": project_id})
 
 def update_project(project_id, updated_data):
-    projects = load_json("projects.json")
-    for p in projects:
-        if p["id"] == project_id:
-            p.update(updated_data)
-    save_json("projects.json", projects)
+    projects_col.update_one({"id": project_id}, {"$set": updated_data})
 
 # -------------------- UI Pages --------------------
 
@@ -117,12 +100,14 @@ def dashboard():
         sub_category = st.text_input("Sub-category")
         name = st.text_input("Project Name")
         description = st.text_area("Project Description")
+        project_link = st.text_input("Project Link (https://...)")
         if st.button("Save Project"):
             save_project(user["id"], {
                 "category": category,
                 "sub_category": sub_category,
                 "name": name,
-                "description": description
+                "description": description,
+                "link": project_link
             })
             st.success("Project saved!")
             st.rerun()
@@ -138,6 +123,8 @@ def dashboard():
         for proj in projects:
             with st.expander(f"📁 {proj['name']} ({proj['category']} > {proj['sub_category']})"):
                 st.write(proj['description'])
+                if proj.get("link"):
+                    st.markdown(f"🔗 [Project Link]({proj['link']})", unsafe_allow_html=True)
 
                 col1, col2 = st.columns(2)
 
@@ -151,8 +138,13 @@ def dashboard():
                     with st.form(f"edit_form_{proj['id']}"):
                         new_name = st.text_input("Project Name", value=proj['name'], key=f"name_{proj['id']}")
                         new_desc = st.text_area("Project Description", value=proj['description'], key=f"desc_{proj['id']}")
+                        new_link = st.text_input("Project Link", value=proj.get("link", ""), key=f"link_{proj['id']}")
                         if st.form_submit_button("✅ Update"):
-                            update_project(proj['id'], {"name": new_name, "description": new_desc})
+                            update_project(proj['id'], {
+                                "name": new_name,
+                                "description": new_desc,
+                                "link": new_link
+                            })
                             st.success("Project updated")
                             st.rerun()
 
