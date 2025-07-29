@@ -1,5 +1,2 @@
 streamlit
-pymongo
-pandas
-numpy
 Pillow

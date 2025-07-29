@@ -1,53 +1,76 @@
 import streamlit as st
-import pymongo
-from bson.objectid import ObjectId
+import json
+import uuid
 from PIL import Image
 import io
+import base64
 
-# -------------------- MongoDB Configuration --------------------
-MONGO_URI = "mongodb://localhost:27017"
-DB_NAME = "project_dashboard"
-COLLECTION_NAME = "projects"
-USER_COLLECTION = "users"
+# ------------------ JSON File Helpers ------------------
 
-client = pymongo.MongoClient(MONGO_URI)
-db = client[DB_NAME]
-projects_collection = db[COLLECTION_NAME]
-users_collection = db[USER_COLLECTION]
+def load_json(file):
+    with open(file, "r") as f:
+        return json.load(f)
 
-# -------------------- Helper Functions --------------------
-def save_project(user_id, project):
-    project["user_id"] = user_id
-    projects_collection.insert_one(project)
+def save_json(file, data):
+    with open(file, "w") as f:
+        json.dump(data, f, indent=4)
 
-def get_projects(user_id):
-    return list(projects_collection.find({"user_id": user_id}))
-
-def delete_project(project_id):
-    projects_collection.delete_one({"_id": ObjectId(project_id)})
-
-def update_project(project_id, updated_data):
-    projects_collection.update_one({"_id": ObjectId(project_id)}, {"$set": updated_data})
+# ------------------ User & Project Functions ------------------
 
 def register_user(email, password, name, college, team_no, mode, profile_pic):
-    if users_collection.find_one({"email": email}):
+    users = load_json("users.json")
+    if any(u["email"] == email for u in users):
         return False, "Email already registered."
-    user_data = {
+
+    pic_data = base64.b64encode(profile_pic.read()).decode() if profile_pic else None
+
+    user = {
+        "id": str(uuid.uuid4()),
         "email": email,
         "password": password,
         "name": name,
         "college": college,
         "team_no": team_no,
         "mode": mode,
-        "profile_pic": profile_pic.read() if profile_pic else None
+        "profile_pic": pic_data
     }
-    users_collection.insert_one(user_data)
+
+    users.append(user)
+    save_json("users.json", users)
     return True, "Registered successfully!"
 
 def login_user(email, password):
-    return users_collection.find_one({"email": email, "password": password})
+    users = load_json("users.json")
+    for user in users:
+        if user["email"] == email and user["password"] == password:
+            return user
+    return None
+
+def save_project(user_id, project):
+    projects = load_json("projects.json")
+    project["id"] = str(uuid.uuid4())
+    project["user_id"] = user_id
+    projects.append(project)
+    save_json("projects.json", projects)
+
+def get_projects(user_id):
+    projects = load_json("projects.json")
+    return [p for p in projects if p["user_id"] == user_id]
+
+def delete_project(project_id):
+    projects = load_json("projects.json")
+    projects = [p for p in projects if p["id"] != project_id]
+    save_json("projects.json", projects)
+
+def update_project(project_id, updated_data):
+    projects = load_json("projects.json")
+    for p in projects:
+        if p["id"] == project_id:
+            p.update(updated_data)
+    save_json("projects.json", projects)
 
 # -------------------- UI Pages --------------------
+
 def signup():
     st.subheader("Sign Up")
     email = st.text_input("Email")
@@ -75,11 +98,16 @@ def login():
             st.error("Invalid credentials")
 
 def dashboard():
-    st.sidebar.image(Image.open(io.BytesIO(st.session_state.user['profile_pic'])), width=100)
-    st.sidebar.markdown(f"**{st.session_state.user['name']}**")
-    st.sidebar.markdown(f"📍 College: {st.session_state.user['college']}")
-    st.sidebar.markdown(f"👥 Team No: {st.session_state.user['team_no']}")
-    st.sidebar.selectbox("Mode", ["Online", "Offline"], index=0 if st.session_state.user['mode'] == "Online" else 1)
+    user = st.session_state.user
+
+    if user.get("profile_pic"):
+        image_data = base64.b64decode(user["profile_pic"])
+        st.sidebar.image(Image.open(io.BytesIO(image_data)), width=100)
+
+    st.sidebar.markdown(f"**{user['name']}**")
+    st.sidebar.markdown(f"📍 College: {user['college']}")
+    st.sidebar.markdown(f"👥 Team No: {user['team_no']}")
+    st.sidebar.selectbox("Mode", ["Online", "Offline"], index=0 if user["mode"] == "Online" else 1)
 
     page = st.sidebar.radio("Navigation", ["Add Project", "View Projects"])
 
@@ -90,7 +118,7 @@ def dashboard():
         name = st.text_input("Project Name")
         description = st.text_area("Project Description")
         if st.button("Save Project"):
-            save_project(st.session_state.user['_id'], {
+            save_project(user["id"], {
                 "category": category,
                 "sub_category": sub_category,
                 "name": name,
@@ -101,7 +129,7 @@ def dashboard():
 
     elif page == "View Projects":
         st.header("Your Projects")
-        projects = get_projects(st.session_state.user['_id'])
+        projects = get_projects(user["id"])
 
         if not projects:
             st.info("No projects found.")
@@ -114,21 +142,22 @@ def dashboard():
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    if st.button("🗑️ Delete", key=f"del_{proj['_id']}"):
-                        delete_project(proj['_id'])
+                    if st.button("🗑️ Delete", key=f"del_{proj['id']}"):
+                        delete_project(proj['id'])
                         st.success("Project deleted")
                         st.rerun()
 
                 with col2:
-                    with st.form(f"edit_form_{proj['_id']}"):
-                        new_name = st.text_input("Project Name", value=proj['name'], key=f"name_{proj['_id']}")
-                        new_desc = st.text_area("Project Description", value=proj['description'], key=f"desc_{proj['_id']}")
+                    with st.form(f"edit_form_{proj['id']}"):
+                        new_name = st.text_input("Project Name", value=proj['name'], key=f"name_{proj['id']}")
+                        new_desc = st.text_area("Project Description", value=proj['description'], key=f"desc_{proj['id']}")
                         if st.form_submit_button("✅ Update"):
-                            update_project(proj['_id'], {"name": new_name, "description": new_desc})
+                            update_project(proj['id'], {"name": new_name, "description": new_desc})
                             st.success("Project updated")
                             st.rerun()
 
 # -------------------- App Entry Point --------------------
+
 st.set_page_config(page_title="📌 Project Dashboard", layout="wide")
 
 if "user" not in st.session_state:
