@@ -96,7 +96,7 @@ def dashboard():
 
     if page == "Add Project":
         st.header("Add New Project")
-        category = st.selectbox("Category", ["DevOps", "Python Projects", "Linux Projects", "Machine Learning", "Web"])
+        category = st.selectbox("Category", ["DevOps", "Git & Github" , "Kubernetes" ,"Python Projects", "Linux Projects", "Machine Learning", "Web"])
         sub_category = st.text_input("Sub-category")
         name = st.text_input("Project Name")
         description = st.text_area("Project Description")
