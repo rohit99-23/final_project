@@ -96,30 +96,48 @@ def dashboard():
 
     if page == "Add Project":
         st.header("Add New Project")
-        category = st.selectbox("Category", ["DevOps", "Git & Github" , "Kubernetes" ,"Python Projects", "Linux Projects", "Machine Learning", "Web"])
+        category = st.selectbox("Category", ["DevOps", "Cloud", "Git & Github", "Kubernetes", "Python Projects", "Linux Projects", "AI/ML", "Web", "JavaScript"])
         sub_category = st.text_input("Sub-category")
         name = st.text_input("Project Name")
         description = st.text_area("Project Description")
         project_link = st.text_input("Project Link (https://...)")
+        GitHub_link = st.text_input("Project Link (https://...)")
         if st.button("Save Project"):
             save_project(user["id"], {
                 "category": category,
                 "sub_category": sub_category,
                 "name": name,
                 "description": description,
-                "link": project_link
+                "link": project_link,
+		 "Github": GitHub_link
             })
             st.success("Project saved!")
             st.rerun()
 
     elif page == "View Projects":
         st.header("Your Projects")
-        projects = get_projects(user["id"])
+
+        # Fetch all projects of the user
+        all_projects = get_projects(user["id"])
+
+        # Project Count
+        st.metric("📊 Total Projects", len(all_projects))
+
+        # Category Filter (Unique categories)
+        categories = list(set([proj["category"] for proj in all_projects]))
+        selected_category = st.selectbox("🔍 Filter by Category", ["All"] + categories)
+
+        # Apply filter
+        if selected_category != "All":
+            projects = [proj for proj in all_projects if proj["category"] == selected_category]
+        else:
+            projects = all_projects
 
         if not projects:
-            st.info("No projects found.")
+            st.info("No projects found for selected category.")
             return
 
+        # Display filtered projects
         for proj in projects:
             with st.expander(f"📁 {proj['name']} ({proj['category']} > {proj['sub_category']})"):
                 st.write(proj['description'])
@@ -129,7 +147,7 @@ def dashboard():
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    if st.button("🗑️ Delete", key=f"del_{proj['id']}"):
+                    if st.button(" Delete", key=f"del_{proj['id']}"):
                         delete_project(proj['id'])
                         st.success("Project deleted")
                         st.rerun()
@@ -139,7 +157,7 @@ def dashboard():
                         new_name = st.text_input("Project Name", value=proj['name'], key=f"name_{proj['id']}")
                         new_desc = st.text_area("Project Description", value=proj['description'], key=f"desc_{proj['id']}")
                         new_link = st.text_input("Project Link", value=proj.get("link", ""), key=f"link_{proj['id']}")
-                        if st.form_submit_button("✅ Update"):
+                        if st.form_submit_button("Update"):
                             update_project(proj['id'], {
                                 "name": new_name,
                                 "description": new_desc,
