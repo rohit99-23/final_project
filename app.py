@@ -100,8 +100,8 @@ def dashboard():
         sub_category = st.text_input("Sub-category")
         name = st.text_input("Project Name")
         description = st.text_area("Project Description")
-	project_link = st.text_input("Project Link (https://...)", key="project_link_input")
-	GitHub_link = st.text_input("GitHub Repository Link", key="github_link_input")
+        project_link = st.text_input("Project Link (https://...)", key="project_link_input")
+        GitHub_link = st.text_input("GitHub Repository Link", key="github_link_input")
 
         if st.button("Save Project"):
             save_project(user["id"], {
