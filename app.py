@@ -1,114 +1,163 @@
 import streamlit as st
-import base64
-import os
-from io import BytesIO
-from PIL import Image
 import pymongo
 import uuid
+import base64
+import io
+from PIL import Image
+import os
 
-st.set_page_config(page_title="Camera & Profile", layout="wide")
-
-# MongoDB Connection (example)
+# MongoDB Connection
 client = pymongo.MongoClient("mongodb://localhost:27017/")
-db = client["test_db"]
+db = client["mess_menu_app"]
 users_collection = db["users"]
 
-# Function to save image to MongoDB
-def save_image_to_db(username, image_bytes):
+# Session state initialization
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "username" not in st.session_state:
+    st.session_state.username = None
+if "profile_pic" not in st.session_state:
+    st.session_state.profile_pic = None
+
+# Save image to DB
+def save_profile_pic(image_data, username):
     users_collection.update_one(
         {"username": username},
-        {"$set": {"profile_pic": image_bytes}},
-        upsert=True
+        {"$set": {"profile_pic": image_data}}
     )
 
-# Camera Capture HTML
-camera_html = """
-<script>
-let videoStream;
-async function startCamera() {
-    const video = document.getElementById('video');
-    videoStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    video.srcObject = videoStream;
-}
+# Sign up function
+def sign_up():
+    st.subheader("Sign Up")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
 
-function capturePhoto() {
-    const video = document.getElementById('video');
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
-    const dataUrl = canvas.toDataURL('image/png');
-    window.parent.postMessage({type: 'photo', data: dataUrl}, '*');
-}
+    uploaded_file = st.file_uploader("Upload a Profile Picture", type=["jpg", "png", "jpeg"])
 
-window.addEventListener('message', function(event) {
-    if (event.data.type === 'start') {
-        startCamera();
-    }
-});
+    # Camera capture button (JS)
+    st.markdown("""
+        <style>
+        .camera-container { margin-top: 10px; }
+        video, canvas { max-width: 100%; border-radius: 8px; }
+        </style>
+        <div class="camera-container">
+            <button id="start-camera">📷 Open Camera</button>
+            <video id="video" autoplay playsinline style="display:none;"></video>
+            <button id="click-photo" style="display:none;">Capture Photo</button>
+            <canvas id="canvas" style="display:none;"></canvas>
+            <p id="camera-output"></p>
+        </div>
+        <script>
+        const startCameraBtn = document.getElementById('start-camera');
+        const video = document.getElementById('video');
+        const clickPhotoBtn = document.getElementById('click-photo');
+        const canvas = document.getElementById('canvas');
+        const output = document.getElementById('camera-output');
 
-</script>
-<video id="video" autoplay style="width:100%;border-radius:10px;"></video>
-<button onclick="capturePhoto()">📸 Capture</button>
-"""
+        startCameraBtn.addEventListener('click', async function() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            video.srcObject = stream;
+            video.style.display = 'block';
+            clickPhotoBtn.style.display = 'inline-block';
+        });
 
-# Video Recording HTML
-video_record_html = """
-<script>
-let recorder, recordedChunks = [];
+        clickPhotoBtn.addEventListener('click', function() {
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = canvas.toDataURL('image/png');
+            output.innerHTML = '<img src="'+imageData+'" width="200"/>';
+        });
+        </script>
+    """, unsafe_allow_html=True)
 
-async function startRecording() {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    document.getElementById('preview').srcObject = stream;
-    recordedChunks = [];
-    recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = e => {
-        if (e.data.size > 0) recordedChunks.push(e.data);
-    };
-    recorder.onstop = () => {
-        const blob = new Blob(recordedChunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'recording.webm';
-        a.click();
-    };
-    recorder.start();
-}
+    if st.button("Sign Up"):
+        if username and password:
+            if users_collection.find_one({"username": username}):
+                st.error("Username already exists")
+            else:
+                profile_pic_data = None
+                if uploaded_file:
+                    profile_pic_data = uploaded_file.read()
+                users_collection.insert_one({
+                    "username": username,
+                    "password": password,
+                    "profile_pic": profile_pic_data
+                })
+                st.success("Account created successfully!")
+        else:
+            st.error("Please fill all fields")
 
-function stopRecording() {
-    recorder.stop();
-}
-</script>
-<video id="preview" autoplay muted style="width:100%;border-radius:10px;"></video><br>
-<button onclick="startRecording()">🎥 Start Recording</button>
-<button onclick="stopRecording()">⏹ Stop Recording</button>
-"""
+# Login function
+def login():
+    st.subheader("Login")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        user = users_collection.find_one({"username": username, "password": password})
+        if user:
+            st.session_state.logged_in = True
+            st.session_state.username = username
+            st.session_state.profile_pic = user.get("profile_pic", None)
+            st.success(f"Welcome {username}!")
+        else:
+            st.error("Invalid username or password")
 
-# Sidebar/Profile section
-st.sidebar.header("Profile Setup")
-username = st.sidebar.text_input("Username")
-uploaded_file = st.sidebar.file_uploader("Upload Profile Picture", type=["jpg", "png", "jpeg"])
+# Dashboard
+def dashboard():
+    st.subheader("Dashboard")
 
-if st.sidebar.button("📷 Use Camera"):
-    st.components.v1.html(camera_html, height=300)
+    # Top-right video record button
+    st.markdown("""
+        <div style="position: absolute; top: 10px; right: 10px;">
+            <button id="start-record">🎥 Start Recording</button>
+            <button id="stop-record" style="display:none;">⏹ Stop Recording</button>
+            <video id="recorded-video" controls style="display:none; width:300px; margin-top:10px;"></video>
+        </div>
+        <script>
+        let mediaRecorder;
+        let recordedChunks = [];
 
-if uploaded_file:
-    img = Image.open(uploaded_file)
-    buf = BytesIO()
-    img.save(buf, format="PNG")
-    byte_im = buf.getvalue()
-    save_image_to_db(username, byte_im)
-    st.sidebar.image(img, caption="Profile Picture", use_container_width=True)
-    st.success("Profile picture saved!")
+        document.getElementById('start-record').addEventListener('click', async function() {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            recordedChunks = [];
+            mediaRecorder.ondataavailable = e => {
+                if (e.data.size > 0) recordedChunks.push(e.data);
+            };
+            mediaRecorder.onstop = () => {
+                const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                const url = URL.createObjectURL(blob);
+                const video = document.getElementById('recorded-video');
+                video.src = url;
+                video.style.display = 'block';
+            };
+            mediaRecorder.start();
+            document.getElementById('start-record').style.display = 'none';
+            document.getElementById('stop-record').style.display = 'inline-block';
+        });
 
-# Main Page Layout
-col1, col2 = st.columns([8, 2])
+        document.getElementById('stop-record').addEventListener('click', function() {
+            mediaRecorder.stop();
+            document.getElementById('stop-record').style.display = 'none';
+            document.getElementById('start-record').style.display = 'inline-block';
+        });
+        </script>
+    """, unsafe_allow_html=True)
 
-with col1:
-    st.title("Welcome to Camera App")
+    st.write(f"Welcome, {st.session_state.username}")
+    if st.session_state.profile_pic:
+        image = Image.open(io.BytesIO(st.session_state.profile_pic))
+        st.image(image, caption="Profile Picture", width=150)
 
-with col2:
-    if st.button("🎥 Open Camera Recorder"):
-        st.components.v1.html(video_record_html, height=400)
+# Main app
+menu = ["Login", "Sign Up", "Dashboard"]
+choice = st.sidebar.selectbox("Menu", menu)
 
+if choice == "Sign Up":
+    sign_up()
+elif choice == "Login":
+    login()
+elif choice == "Dashboard":
+    if st.session_state.logged_in:
+        dashboard()
+    else:
+        st.error("Please login first")
