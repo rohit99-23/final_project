@@ -6,158 +6,177 @@ import io
 from PIL import Image
 import os
 
-# MongoDB Connection
-client = pymongo.MongoClient("mongodb://localhost:27017/")
-db = client["mess_menu_app"]
-users_collection = db["users"]
+# ------------------ MongoDB Setup ------------------
+MONGO_URI = st.secrets["MONGO_URI"]  # Stored in Streamlit secrets
+client = pymongo.MongoClient(MONGO_URI)
+db = client["project_dashboard"]
+users_col = db["users"]
+projects_col = db["projects"]
 
-# Session state initialization
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "username" not in st.session_state:
-    st.session_state.username = None
-if "profile_pic" not in st.session_state:
-    st.session_state.profile_pic = None
+# ------------------ User & Project Functions ------------------
 
-# Save image to DB
-def save_profile_pic(image_data, username):
-    users_collection.update_one(
-        {"username": username},
-        {"$set": {"profile_pic": image_data}}
-    )
+def register_user(email, password, name, college, team_no, mode, profile_pic):
+    if users_col.find_one({"email": email}):
+        return False, "Email already registered."
 
-# Sign up function
-def sign_up():
+    pic_data = base64.b64encode(profile_pic.read()).decode() if profile_pic else None
+
+    user = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "password": password,
+        "name": name,
+        "college": college,
+        "team_no": team_no,
+        "mode": mode,
+        "profile_pic": pic_data
+    }
+
+    users_col.insert_one(user)
+    return True, "Registered successfully!"
+
+def login_user(email, password):
+    return users_col.find_one({"email": email, "password": password})
+
+def save_project(user_id, project):
+    project["id"] = str(uuid.uuid4())
+    project["user_id"] = user_id
+    projects_col.insert_one(project)
+
+def get_projects(user_id):
+    return list(projects_col.find({"user_id": user_id}))
+
+def delete_project(project_id):
+    projects_col.delete_one({"id": project_id})
+
+def update_project(project_id, updated_data):
+    projects_col.update_one({"id": project_id}, {"$set": updated_data})
+
+# -------------------- UI Pages --------------------
+
+def signup():
     st.subheader("Sign Up")
-    username = st.text_input("Username")
+    email = st.text_input("Email")
     password = st.text_input("Password", type="password")
-
-    uploaded_file = st.file_uploader("Upload a Profile Picture", type=["jpg", "png", "jpeg"])
-
-    # Camera capture button (JS)
-    st.markdown("""
-        <style>
-        .camera-container { margin-top: 10px; }
-        video, canvas { max-width: 100%; border-radius: 8px; }
-        </style>
-        <div class="camera-container">
-            <button id="start-camera">📷 Open Camera</button>
-            <video id="video" autoplay playsinline style="display:none;"></video>
-            <button id="click-photo" style="display:none;">Capture Photo</button>
-            <canvas id="canvas" style="display:none;"></canvas>
-            <p id="camera-output"></p>
-        </div>
-        <script>
-        const startCameraBtn = document.getElementById('start-camera');
-        const video = document.getElementById('video');
-        const clickPhotoBtn = document.getElementById('click-photo');
-        const canvas = document.getElementById('canvas');
-        const output = document.getElementById('camera-output');
-
-        startCameraBtn.addEventListener('click', async function() {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            video.srcObject = stream;
-            video.style.display = 'block';
-            clickPhotoBtn.style.display = 'inline-block';
-        });
-
-        clickPhotoBtn.addEventListener('click', function() {
-            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-            const imageData = canvas.toDataURL('image/png');
-            output.innerHTML = '<img src="'+imageData+'" width="200"/>';
-        });
-        </script>
-    """, unsafe_allow_html=True)
-
+    name = st.text_input("Name")
+    college = st.text_input("College")
+    team_no = st.text_input("Team Number")
+    mode = st.selectbox("Mode", ["Online", "Offline"])
+    profile_pic = st.file_uploader("Upload Profile Picture", type=["png", "jpg", "jpeg"])
     if st.button("Sign Up"):
-        if username and password:
-            if users_collection.find_one({"username": username}):
-                st.error("Username already exists")
-            else:
-                profile_pic_data = None
-                if uploaded_file:
-                    profile_pic_data = uploaded_file.read()
-                users_collection.insert_one({
-                    "username": username,
-                    "password": password,
-                    "profile_pic": profile_pic_data
-                })
-                st.success("Account created successfully!")
-        else:
-            st.error("Please fill all fields")
+        success, msg = register_user(email, password, name, college, team_no, mode, profile_pic)
+        st.success(msg) if success else st.error(msg)
 
-# Login function
 def login():
     st.subheader("Login")
-    username = st.text_input("Username")
+    email = st.text_input("Email")
     password = st.text_input("Password", type="password")
     if st.button("Login"):
-        user = users_collection.find_one({"username": username, "password": password})
+        user = login_user(email, password)
         if user:
-            st.session_state.logged_in = True
-            st.session_state.username = username
-            st.session_state.profile_pic = user.get("profile_pic", None)
-            st.success(f"Welcome {username}!")
+            st.session_state.user = user
+            st.success("Login successful")
+            st.rerun()
         else:
-            st.error("Invalid username or password")
+            st.error("Invalid credentials")
 
-# Dashboard
 def dashboard():
-    st.subheader("Dashboard")
+    user = st.session_state.user
 
-    # Top-right video record button
-    st.markdown("""
-        <div style="position: absolute; top: 10px; right: 10px;">
-            <button id="start-record">🎥 Start Recording</button>
-            <button id="stop-record" style="display:none;">⏹ Stop Recording</button>
-            <video id="recorded-video" controls style="display:none; width:300px; margin-top:10px;"></video>
-        </div>
-        <script>
-        let mediaRecorder;
-        let recordedChunks = [];
+    if user.get("profile_pic"):
+        image_data = base64.b64decode(user["profile_pic"])
+        st.sidebar.image(Image.open(io.BytesIO(image_data)), width=100)
 
-        document.getElementById('start-record').addEventListener('click', async function() {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            mediaRecorder = new MediaRecorder(stream);
-            recordedChunks = [];
-            mediaRecorder.ondataavailable = e => {
-                if (e.data.size > 0) recordedChunks.push(e.data);
-            };
-            mediaRecorder.onstop = () => {
-                const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                const url = URL.createObjectURL(blob);
-                const video = document.getElementById('recorded-video');
-                video.src = url;
-                video.style.display = 'block';
-            };
-            mediaRecorder.start();
-            document.getElementById('start-record').style.display = 'none';
-            document.getElementById('stop-record').style.display = 'inline-block';
-        });
+    st.sidebar.markdown(f"**{user['name']}**")
+    st.sidebar.markdown(f"📍 College: {user['college']}")
+    st.sidebar.markdown(f"👥 Team No: {user['team_no']}")
+    st.sidebar.selectbox("Mode", ["Online", "Offline"], index=0 if user["mode"] == "Online" else 1)
 
-        document.getElementById('stop-record').addEventListener('click', function() {
-            mediaRecorder.stop();
-            document.getElementById('stop-record').style.display = 'none';
-            document.getElementById('start-record').style.display = 'inline-block';
-        });
-        </script>
-    """, unsafe_allow_html=True)
+    page = st.sidebar.radio("Navigation", ["Add Project", "View Projects"])
 
-    st.write(f"Welcome, {st.session_state.username}")
-    if st.session_state.profile_pic:
-        image = Image.open(io.BytesIO(st.session_state.profile_pic))
-        st.image(image, caption="Profile Picture", width=150)
+    if page == "Add Project":
+        st.header("Add New Project")
+        category = st.selectbox("Category", ["DevOps", "Cloud", "Git & Github", "Kubernetes", "Python Projects", "Linux Projects", "AI/ML", "Web", "JavaScript"])
+        sub_category = st.text_input("Sub-category")
+        name = st.text_input("Project Name")
+        description = st.text_area("Project Description")
+        project_link = st.text_input("Project Link (https://...)", key="project_link_input")
+        GitHub_link = st.text_input("GitHub Repository Link", key="github_link_input")
 
-# Main app
-menu = ["Login", "Sign Up", "Dashboard"]
-choice = st.sidebar.selectbox("Menu", menu)
+        if st.button("Save Project"):
+            save_project(user["id"], {
+                "category": category,
+                "sub_category": sub_category,
+                "name": name,
+                "description": description,
+                "link": project_link,
+		 "Github": GitHub_link
+            })
+            st.success("Project saved!")
+            st.rerun()
 
-if choice == "Sign Up":
-    sign_up()
-elif choice == "Login":
-    login()
-elif choice == "Dashboard":
-    if st.session_state.logged_in:
-        dashboard()
+    elif page == "View Projects":
+        st.header("Your Projects")
+
+        # Fetch all projects of the user
+        all_projects = get_projects(user["id"])
+
+        # Project Count
+        st.metric("📊 Total Projects", len(all_projects))
+
+        # Category Filter (Unique categories)
+        categories = list(set([proj["category"] for proj in all_projects]))
+        selected_category = st.selectbox("🔍 Filter by Category", ["All"] + categories)
+
+        # Apply filter
+        if selected_category != "All":
+            projects = [proj for proj in all_projects if proj["category"] == selected_category]
+        else:
+            projects = all_projects
+
+        if not projects:
+            st.info("No projects found for selected category.")
+            return
+
+        # Display filtered projects
+        for proj in projects:
+            with st.expander(f"📁 {proj['name']} ({proj['category']} > {proj['sub_category']})"):
+                st.write(proj['description'])
+                if proj.get("link"):
+                    st.markdown(f"🔗 [Project Link]({proj['link']})", unsafe_allow_html=True)
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    if st.button(" Delete", key=f"del_{proj['id']}"):
+                        delete_project(proj['id'])
+                        st.success("Project deleted")
+                        st.rerun()
+
+                with col2:
+                    with st.form(f"edit_form_{proj['id']}"):
+                        new_name = st.text_input("Project Name", value=proj['name'], key=f"name_{proj['id']}")
+                        new_desc = st.text_area("Project Description", value=proj['description'], key=f"desc_{proj['id']}")
+                        new_link = st.text_input("Project Link", value=proj.get("link", ""), key=f"link_{proj['id']}")
+                        if st.form_submit_button("Update"):
+                            update_project(proj['id'], {
+                                "name": new_name,
+                                "description": new_desc,
+                                "link": new_link
+                            })
+                            st.success("Project updated")
+                            st.rerun()
+
+# -------------------- App Entry Point --------------------
+
+st.set_page_config(page_title="📌 Project Dashboard", layout="wide")
+
+if "user" not in st.session_state:
+    st.title("👤 Personal Project Dashboard")
+    auth_page = st.radio("Choose Page", ["Login", "Sign Up"])
+    if auth_page == "Login":
+        login()
     else:
-        st.error("Please login first")
+        signup()
+else:
+    dashboard()
